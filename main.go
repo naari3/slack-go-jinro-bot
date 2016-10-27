@@ -16,6 +16,7 @@ type App struct{
     Api *slack.Client
     RTM *slack.RTM
     DB *sql.DB
+    Rooms *Rooms
 }
 
 func NewApp(token string) (*App, error) {
@@ -34,20 +35,26 @@ func NewApp(token string) (*App, error) {
     rtm := api.NewRTM()
     go rtm.ManageConnection()
 
+    rooms := Rooms{
+        Rooms: make(map[int]Room),
+    }
+
     app := App{
         Api: api,
         RTM: rtm,
         DB: db,
+        Rooms: &rooms,
     }
     return &app, nil
 }
 
 func (app *App) StartGame(ju *JinroUser) {
     fmt.Printf("jinrouser's channel: %v\n", ju.Channel)
+
 }
 
 type Rooms struct{
-    Rooms []Room
+    Rooms map[int]Room
 }
 
 type Room struct{
@@ -56,9 +63,16 @@ type Room struct{
     mux sync.Mutex
 }
 
-func (r *Room) GetRoomById(roomId string) *Room {
+func (r Room) GetRoom() Room {
     r.mux.Lock()
     defer r.mux.Unlock()
+    return r
+}
+
+func (r *Room) ToNextStep() *Room {
+    r.mux.Lock()
+    defer r.mux.Unlock()
+    r.Status += 1
     return r
 }
 
