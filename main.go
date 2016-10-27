@@ -5,7 +5,7 @@ import (
     "log"
     "os"
     // "reflect"
-    // "sync"
+    "sync"
     _ "github.com/lib/pq"
     "database/sql"
 
@@ -46,6 +46,22 @@ func (app *App) StartGame(ju *JinroUser) {
     fmt.Printf("jinrouser's channel: %v\n", ju.Channel)
 }
 
+type Rooms struct{
+    Rooms []Room
+}
+
+type Room struct{
+    JinroUsers []JinroUser
+    Status int
+    mux sync.Mutex
+}
+
+func (r *Room) GetRoomById(roomId string) *Room {
+    r.mux.Lock()
+    defer r.mux.Unlock()
+    return r
+}
+
 type JinroUser struct{
     User *slack.User
     Channel string
@@ -81,7 +97,7 @@ func (app *App) TextHandler(ev *slack.MessageEvent) {
 }
 
 func main() {
-    app, err := NewApp("xoxb-96395146054-zSOpm3385oBnas7vJePqKnXJ")
+    app, err := NewApp("token")
     if err != nil {
         fmt.Printf("%s\n", err)
         return
