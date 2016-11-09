@@ -5,7 +5,11 @@ import (
     "log"
     "os"
     // "reflect"
-    "sync"
+    // "sync"
+    // "regexp"
+    "strconv"
+    // "errors"
+    "strings"
     _ "github.com/lib/pq"
     "database/sql"
 
@@ -16,7 +20,123 @@ type App struct{
     Api *slack.Client
     RTM *slack.RTM
     DB *sql.DB
-    Rooms *Rooms
+    Rooms map[string]*Room
+}
+
+type Room struct{
+    Id string
+    Status Status
+    Users []User
+}
+
+type Status struct{
+    Phase int // 0:init, 1:朝, 2:村人投票, 3:人狼のターンと(占い師, 騎士)の選択, 4:処理,結果表示(1に行くか終わる)
+    Days int // 日数
+}
+
+type User struct{
+    Name string
+    Channel string
+    Job int // 0:None 1:村人, 2:人狼, 3:占い師, 4:騎士
+    IsAlive bool
+}
+
+type RoomError struct{
+    Msg string
+    Code int
+}
+
+func (e *RoomError) Error() string {
+    return "RoomError"
+}
+
+func (app *App) NewRoom(roomId string) error {
+    newStatus := Status{
+        Phase: 0,
+        Days: 0,
+    }
+    newRoom := Room{
+        Id: roomId,
+        Status: newStatus,
+        Users: make([]User, 0),
+    }
+    app.Rooms[roomId] = &newRoom
+    return nil
+}
+
+func (app *App) JoinRoom(roomId string, newUser *User) error {
+    for _, room := range app.Rooms {
+        for _, user := range room.Users {
+            if user.Channel == newUser.Channel {
+                return &RoomError{Msg: "already joined room", Code: 1}
+            }
+        }
+    }
+    app.Rooms[roomId].Users = append(app.Rooms[roomId].Users, *newUser)
+    return nil
+}
+
+func (room Room) GetInfo() string {
+    return strconv.Itoa(len(room.Users)) + "人"
+}
+
+func (app *App) TextHandler(ev *slack.MessageEvent) {
+    userid := ev.Msg.User
+    channel := ev.Msg.Channel
+    text := ev.Msg.Text
+    if channel[0] != "D"[0] { // if channel[0] == "D": its Direct Message
+        return
+    }
+    user, err := app.Api.GetUserInfo(userid)
+    if err != nil {
+        fmt.Printf("%s\n", err)
+        return
+    }
+    fmt.Printf("ID: %s, Fullname: %s, Email: %s\n", user.ID, user.Name, user.Profile.Email)
+    jinroUser := &User{
+        Name: user.Name,
+        Channel: channel,
+        Job: 0,
+        IsAlive: true,
+    }
+    // username := user.Name
+    cmd := CommandParser(text)
+    switch cmd[0] {
+    case "make":
+        if err := app.NewRoom(cmd[1]); err != nil{
+            app.SendMessageText("can't maked", channel)
+            break
+        }
+        app.SendMessageText("maked! "+cmd[1], channel)
+    case "join":
+        if err := app.JoinRoom(cmd[1], jinroUser); err != nil {
+            switch e := err.(type) {
+            case *RoomError:
+                app.SendMessageText(e.Msg, channel)
+            default:
+                app.SendMessageText("err", channel)
+            }
+        }
+    case "status":
+        text := app.Rooms[cmd[1]].GetInfo()
+        app.SendMessageText(text, channel)
+    case "start":
+        app.SendMessageText("huh", channel)
+    }
+    return
+}
+
+func CommandParser(cmd string) []string { // 駄目
+    // r := regexp.MustCompile(`^([a-zA-Z][\w-]*)(\s.*)?$`)
+    // return r.FindSubmatch(cmd)
+    arr := strings.Split(cmd, " ")
+    return arr
+}
+
+func (app *App) SendMessageText(text, channel string) {
+    msg := app.RTM.NewOutgoingMessage(text, channel)
+    app.RTM.SendMessage(msg)
+    return
 }
 
 func NewApp(token string) (*App, error) {
@@ -35,83 +155,17 @@ func NewApp(token string) (*App, error) {
     rtm := api.NewRTM()
     go rtm.ManageConnection()
 
-    rooms := Rooms{
-        Rooms: make(map[int]Room),
-    }
-
     app := App{
         Api: api,
         RTM: rtm,
         DB: db,
-        Rooms: &rooms,
+        Rooms: make(map[string]*Room),
     }
     return &app, nil
 }
 
-func (app *App) StartGame(ju *JinroUser) {
-    fmt.Printf("jinrouser's channel: %v\n", ju.Channel)
-
-}
-
-type Rooms struct{
-    Rooms map[int]Room
-}
-
-type Room struct{
-    JinroUsers []JinroUser
-    Status int
-    mux sync.Mutex
-}
-
-func (r Room) GetRoom() Room {
-    r.mux.Lock()
-    defer r.mux.Unlock()
-    return r
-}
-
-func (r *Room) ToNextStep() *Room {
-    r.mux.Lock()
-    defer r.mux.Unlock()
-    r.Status += 1
-    return r
-}
-
-type JinroUser struct{
-    User *slack.User
-    Channel string
-}
-
-func (app *App) TextHandler(ev *slack.MessageEvent) {
-    userid := ev.Msg.User
-    channel := ev.Msg.Channel
-    text := ev.Msg.Text
-    if channel[0] != "D"[0] { // if channel[0] == "D": its Direct Message
-        return
-    }
-    user, err := app.Api.GetUserInfo(userid)
-    if err != nil {
-        fmt.Printf("%s\n", err)
-        return
-    }
-    fmt.Printf("ID: %s, Fullname: %s, Email: %s\n", user.ID, user.Name, user.Profile.Email)
-    // username := user.Name
-    switch text {
-    case "help":
-        text := "plz say \"start\""
-        msg := app.RTM.NewOutgoingMessage(text, channel)
-        app.RTM.SendMessage(msg)
-    case "start":
-        ju := JinroUser{
-            User: user,
-            Channel: channel,
-        }
-        app.StartGame(&ju)
-    }
-    return
-}
-
 func main() {
-    app, err := NewApp("token")
+    app, err := NewApp("")
     if err != nil {
         fmt.Printf("%s\n", err)
         return
