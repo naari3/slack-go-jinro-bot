@@ -46,6 +46,8 @@ type RoomError struct{
     Code int
 }
 
+
+
 func (e *RoomError) Error() string {
     return "RoomError"
 }
@@ -65,6 +67,10 @@ func (app *App) NewRoom(roomId string) error {
 }
 
 func (app *App) JoinRoom(roomId string, newUser *User) error {
+    targetRoom, ok := app.Rooms[roomId]
+    if !ok {
+        return &RoomError{Msg: "no such that room", Code: 2}
+    }
     for _, room := range app.Rooms {
         for _, user := range room.Users {
             if user.Channel == newUser.Channel {
@@ -72,12 +78,17 @@ func (app *App) JoinRoom(roomId string, newUser *User) error {
             }
         }
     }
-    app.Rooms[roomId].Users = append(app.Rooms[roomId].Users, *newUser)
+    targetRoom.Users = append(targetRoom.Users, *newUser)
     return nil
 }
 
 func (room Room) GetInfo() string {
-    return strconv.Itoa(len(room.Users)) + "人"
+    text := ""
+    for _, user := range room.Users {
+        text += user.Name
+        text += "\n"
+    }
+    return strconv.Itoa(len(room.Users)) + "人\n" + text
 }
 
 func (app *App) TextHandler(ev *slack.MessageEvent) {
@@ -102,12 +113,12 @@ func (app *App) TextHandler(ev *slack.MessageEvent) {
     // username := user.Name
     cmd := CommandParser(text)
     switch cmd[0] {
-    case "make":
+    case "create":
         if err := app.NewRoom(cmd[1]); err != nil{
-            app.SendMessageText("can't maked", channel)
+            app.SendMessageText("can't create!", channel)
             break
         }
-        app.SendMessageText("maked! "+cmd[1], channel)
+        app.SendMessageText("created! "+cmd[1], channel)
     case "join":
         if err := app.JoinRoom(cmd[1], jinroUser); err != nil {
             switch e := err.(type) {
@@ -165,7 +176,7 @@ func NewApp(token string) (*App, error) {
 }
 
 func main() {
-    app, err := NewApp("")
+    app, err := NewApp("xoxb-96395146054-WEUUkoRhv8akyEoPXDLNIm3z")
     if err != nil {
         fmt.Printf("%s\n", err)
         return
